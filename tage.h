@@ -1,0 +1,357 @@
+#include "ooo_cpu.h"
+#include <cstdlib>
+#include <bitset>
+#include <stdlib.h>  
+
+#define BIMODAL_TABLE_SIZE 4096
+#define BANK_TABLE_SIZE 1024
+#define GLOBAL_HISTORY_LENGTH 80
+#define NO_OF_BANKS 4
+
+// int global_history[GLOBAL_HISTORY_LENGTH];
+bitset<GLOBAL_HISTORY_LENGTH> GHR;
+bitset<GLOBAL_HISTORY_LENGTH> temp;
+bitset<GLOBAL_HISTORY_LENGTH> mask;
+bitset<GLOBAL_HISTORY_LENGTH> CSR1_mask;
+bitset<GLOBAL_HISTORY_LENGTH> CSR2_mask;
+
+// Track X bank
+int bank_chosen,alt_bank;
+int bank_pred,alt_pred;
+int tag;
+
+int ind[NO_OF_BANKS+1] ; 
+
+class BimodalCell {
+    public:
+    int counter;
+    int msb;
+
+    BimodalCell() {
+        this->counter = 2;
+        this->msb = 1;
+    }
+
+    void increment() {
+        if (counter < 3) {
+            counter++;
+            this->msb = (counter >> 1);
+        }
+    }
+
+    void decrement() {
+        if (counter > 0) {
+            counter--;
+            this->msb = (counter >> 1);
+        }
+    }
+
+    void update(int counter) {
+        this->counter = counter;
+        this->msb = (counter >> 1);
+    }
+};
+
+class BankCell {
+    public: 
+    int counter;
+    int tag;
+    int u;
+    int msb;
+
+    void Bankcell() {
+        this->counter = 4;
+        this->tag = 0;
+        this->u = 0;
+        this->msb = 1;
+    }
+
+    void increment() {
+        if (counter < 7) {
+            counter++;
+            this->msb = (counter >> 2);
+        }
+    }
+
+    void decrement() {
+        if (counter > 0) {
+            counter--;
+            this->msb = (counter >> 2);
+        }
+    }
+
+    void increment_u() { 
+          if ( this->u < 3 ){ 
+              this->u += 1 ; 
+          }
+    }
+    void decrement_u() { 
+          if ( this->u > 0 ){ 
+              this->u -= 1  ; 
+          }
+    }
+    void update(int tag, int counter) {
+        this->counter = counter;
+        this->tag = tag;
+        this->u = 0 ;
+        this->msb = (counter >> 2);
+        // //cout<< int(counter) << " bank msb " << int(this->msb) << endl;
+    }
+};
+
+class BimodalTable {
+    public:
+    BimodalCell* bimodaltable[BIMODAL_TABLE_SIZE];
+
+    BimodalTable() {
+        for(int i = 0; i < BIMODAL_TABLE_SIZE; i++) {
+            bimodaltable[i] = new BimodalCell();
+        }
+    }
+
+    BimodalCell* getindex(int index) {
+        return bimodaltable[index];
+    }
+
+    void update_counter(int index, int taken) {
+        int bank_ctr = bimodaltable[index]->counter;
+        if (taken) {
+                bimodaltable[index]->increment();
+        } else {
+                bimodaltable[index]->decrement();
+        }
+    }
+
+    void print() { 
+         for ( int i = 0 ; i < BIMODAL_TABLE_SIZE ; i++ ) { 
+              if ( bimodaltable[i]->counter  != 2 || bimodaltable[i]->msb != 1 ) { 
+                  //cout<<i<<" "<<int(bimodaltable[i]->counter)<<" "<< int(bimodaltable[i]->msb) <<endl ; 
+              }
+         }
+         //cout<<"End"<<endl;
+    }
+};
+
+class BankTable {
+    public:
+    BankCell* banktable[BANK_TABLE_SIZE];
+    int bankNo;
+
+    BankTable(int bankNo) {
+        this->bankNo = bankNo;
+        for(int i = 0; i < BANK_TABLE_SIZE; i++) {
+            banktable[i] = new BankCell();
+        }
+    }
+
+    BankCell* getindex(int index) {
+        return banktable[index];
+    }
+
+    void update_counter(int index, int taken) {
+        int bank_ctr = banktable[index]->counter;
+        if (taken) {
+            banktable[index]->increment();
+        } else {
+            banktable[index]->decrement();
+        }
+        ////cout<<"Bank "<<(this->bankNo)<<" index "<<int(index)<<" tag "<<tag<<" counter "<<int(banktable[index]->counter)<<endl  ; 
+    }
+
+    void update( int index, int tag ) {
+        banktable[index]->update(tag, 4);
+    }
+
+    void print() { 
+         //cout<<"Bank Table "<<int(this->bankNo)<<endl ; 
+         for ( int i = 0 ; i < BANK_TABLE_SIZE ; i++ ) { 
+              if ( banktable[i]->tag  != 0 ) { 
+                  //cout<<i<<" "<<int(banktable[i]->counter)<<" "<<int(banktable[i]->tag)<<" "<<int(banktable[i]->u)<<endl ; 
+              }
+         }
+         //cout<<"End"<<endl;
+    }
+};
+
+class Tables { 
+    public : 
+     BimodalTable* bimodal_table;
+     BankTable* banks[4] ; 
+     Tables() { 
+         for ( int i = 0 ; i < 4 ; i ++ ) banks[i] = new BankTable(i+1) ; 
+         bimodal_table = new BimodalTable(); 
+     }
+     
+     void update_counter(int bank_chosen , int taken) {  //bank_chosen 
+           if ( bank_chosen ) banks[bank_chosen-1]->update_counter(ind[bank_chosen] , taken );
+           else bimodal_table->update_counter(ind[bank_chosen] , taken ) ; 
+     }
+
+     void add_new_entry_miss( int bank_chosen  , int taken) { 
+          if ( bank_chosen == 4) return ; 
+          int is_all_u_set = true ; 
+          for ( int i = bank_chosen + 1 ; i <= NO_OF_BANKS   ; i++ ) {  
+                if ( !banks[i-1]->getindex(ind[i])->u ) { 
+                      banks[i-1]->update( ind[i] , tag);
+                      is_all_u_set = false ; 
+                      break ; 
+                }
+          }
+          if ( is_all_u_set ) { 
+               for ( int i = bank_chosen + 1 ; i <= NO_OF_BANKS  ; i++ ) { 
+                   banks[i-1]->getindex(ind[i])->decrement_u();
+               }
+          }  
+     }
+    
+     void updateIndex( uint64_t ip ) { 
+        //int i = 1 ;
+        //int last_index = index0 ; 
+        // for ( int j = 0 ; j < 80 ; j++ ) { 
+        //      if ( j < i*10  ){
+        //         temp = GHR ; 
+        //         temp >>= j ; 
+        //         last_index = last_index ^ (temp &= mask).to_ulong();
+        // }
+        temp = GHR;
+        int index0 = (ip & ~(~0 << 12));
+        int index1 = (ip & ~(~0 << 10)) ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 10;
+        int index2 = index1 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 20;
+        int index3 = index2 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 30;
+        index3 = index3 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 40;
+        int index4 = index3 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 50;
+        index4 = index4 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 60;
+        index4 = index4 ^ (temp &= mask).to_ulong();
+        temp = GHR;
+        temp >>= 70;
+        index4 = index4 ^ (temp &= mask).to_ulong();
+        ind[0] = index0 ; 
+        ind[1] = index1 ; 
+        ind[2] = index2 ; 
+        ind[3] = index3 ; 
+        ind[4] = index4 ; 
+     }
+    
+     void findPred(int tag) {
+          bank_pred = bimodal_table->getindex(ind[0])->msb ;  
+          bank_chosen = 0 ; 
+          for ( int i = NO_OF_BANKS - 1  ; i >= 0 ; i-- ) {  //bank_chosen  = i + 1 
+              if ( banks[i]->getindex(ind[i+1])->tag == tag ) {
+                   bank_chosen = i+1 ; 
+                   bank_pred = banks[i]->getindex(ind[i+1])->msb ; 
+                   break ;  
+              }
+          }
+         
+          alt_pred = bimodal_table->getindex(ind[0])->msb ;  
+          alt_bank = 0 ;
+          if ( bank_chosen > 1 ) {  
+            for ( int i = bank_chosen-2  ; i >= 0 ; i-- ) {  //bank_chosen  = i + 1 
+               if ( banks[i]->getindex(ind[i+1])->tag == tag ) {
+                   alt_bank = i+1 ; 
+                   alt_pred = banks[i]->getindex(ind[i+1])->msb ; 
+                   break ;  
+               }
+            }
+         }
+
+     }
+  
+     void print() { 
+         bimodal_table->print();
+         for ( int i = 0 ; i < NO_OF_BANKS ; i++ ) banks[i]->print();
+     }
+}; 
+
+class Tage {
+public:
+    Tables tables ;
+
+// 4 bits -> 3 for counter, 1 for m
+
+// 12 bits -> 3 for counter, 8 for tag, 1 for u
+
+    BimodalCell* ab = tables.bimodal_table->getindex(1503) ; 
+
+    Tage() {
+        
+        for(int i = 0; i < GLOBAL_HISTORY_LENGTH; i++) {
+            if (i > 9) {
+                mask.set(i, 0);
+            } else {
+                mask.set(i, 1);
+            }
+
+            if (i > 7) {
+                CSR1_mask.set(i, 0);
+            } else {
+                CSR1_mask.set(i, 1);
+            }
+            
+            if (i > 6) {
+                CSR2_mask.set(i, 0);
+            } else {
+                CSR2_mask.set(i, 1);
+            }
+        }
+
+        bank_chosen = 0;
+        bank_pred = 0;
+        tag = 0;
+
+        GHR.reset();
+        temp.reset();
+
+    }
+
+
+    uint8_t predict(uint64_t ip) {
+        tables.updateIndex(ip);
+
+        //tag find start 
+        temp = GHR;
+        tag = (ip & ~(~0 << 8)) ^ (temp &= CSR1_mask).to_ulong();
+        temp = GHR;
+        temp >>= 8;
+        tag = tag ^ ((temp &= CSR2_mask).to_ulong() << 1);
+
+        tables.findPred(tag);
+        return bank_pred ;  
+    }
+
+    void last_branch_result(uint16_t ip, uint8_t taken) {
+        srand(1);
+        GHR = (GHR << 1);
+        GHR.set(0, taken);
+
+        // update counter for the predictor bank with respect whether the branch is taken 
+        tables.update_counter(bank_chosen  , taken);
+
+        // X <= 3
+        if ( bank_pred != taken) {
+            tables.add_new_entry_miss( bank_chosen , taken );
+        }
+
+        if ( bank_chosen && (bank_pred != alt_pred) ) { 
+                if ( bank_pred == taken ) tables.banks[ bank_chosen - 1 ]->getindex(ind[bank_chosen])->increment_u(); 
+                else tables.banks[ bank_chosen - 1 ]->getindex(ind[bank_chosen])->decrement_u() ; 
+        }
+
+        //cout<<"update"<<endl;   
+        //cout<<"x :: "<<int(bank_pred)<<" "<<int(alt_pred)<<" "<<int(taken)<<" "<<endl ; 
+        tables.print();
+    }
+
+};
