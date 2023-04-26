@@ -17,22 +17,29 @@ void ctr_update (uint8_t taken) {
 
 // Initialises the predictor
 void O3_CPU::initialize_branch_predictor() {
+    
     tage = new Tage();                      // tage predictor component for each cpu 
     loop = new LoopPred();                  // loop predictor component for each cpu
 }
+
 
 // Predicts whether branch is taken or not
 uint8_t O3_CPU::predict_branch(uint64_t ip) {
     loop_pred = loop->get_prediction(ip);
     tage_pred = tage->predict(ip);
-    if ((loop->is_valid) && (loop_correct >= 0)) 
+    if ((loop->is_valid) && (loop_correct >= 0)) { 
         return loop_pred;
+    }
     return tage_pred;
 }
 
 // Updates the predictor based on the last branch result
 void O3_CPU::last_branch_result(uint64_t ip, uint8_t taken) {
+    //cout<<x<<" "<<y<<endl ; 
+    //cout<<int(ip)<<" "<<int(final_pred)<<" "<<int(taken)<<endl ; 
+    //cout<<ip<<endl ; 
     tage->last_branch_result(ip, taken);
     loop->update_entry(taken, tage_pred);
     if (loop->is_valid && (tage_pred != loop_pred)) ctr_update(taken);
 }
+  
